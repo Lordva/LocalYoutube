@@ -3,11 +3,21 @@ import googleapiclient.errors
 import yt_dlp
 import json
 from PyInquirer import prompt
+from enum import Enum
 
 config = "./config.json"
 
 api_service_name = "youtube"
 api_version = "v3"
+
+banner = """ ▄▄▄     ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄ ▄▄▄▄▄▄ ▄▄▄     ▄▄   ▄▄ ▄▄▄▄▄▄▄ ▄▄   ▄▄ ▄▄▄▄▄▄▄ ▄▄   ▄▄ ▄▄▄▄▄▄▄ ▄▄▄▄▄▄▄ 
+█   █   █       █       █      █   █   █  █ █  █       █  █ █  █       █  █ █  █  ▄    █       █
+█   █   █   ▄   █       █  ▄   █   █   █  █▄█  █   ▄   █  █ █  █▄     ▄█  █ █  █ █▄█   █    ▄▄▄█
+█   █   █  █ █  █     ▄▄█ █▄█  █   █   █       █  █ █  █  █▄█  █ █   █ █  █▄█  █       █   █▄▄▄ 
+█   █▄▄▄█  █▄█  █    █  █      █   █▄▄▄█▄     ▄█  █▄█  █       █ █   █ █       █  ▄   ██    ▄▄▄█
+█       █       █    █▄▄█  ▄   █       █ █   █ █       █       █ █   █ █       █ █▄█   █   █▄▄▄ 
+█▄▄▄▄▄▄▄█▄▄▄▄▄▄▄█▄▄▄▄▄▄▄█▄█ █▄▄█▄▄▄▄▄▄▄█ █▄▄▄█ █▄▄▄▄▄▄▄█▄▄▄▄▄▄▄█ █▄▄▄█ █▄▄▄▄▄▄▄█▄▄▄▄▄▄▄█▄▄▄▄▄▄▄█
+"""
 
 main_menu = [
     {
@@ -23,7 +33,40 @@ main_menu = [
     }
 ]
 
-class Download:
+
+class Status(Enum):
+    INFO = 0,
+    WARNING = 1,
+    ERROR = 2,
+    DEBUG = 3,
+
+
+Color = {
+    "RED": "\033[91m",
+    "GREEN": "\033[92m",
+    "YELLOW": "\033[93m",
+    "LIGHT_PURPLE": "\033[94m",
+    "PURPLE": "\033[95m",
+    "CYAN": "\033[96m ",
+    "LIGHT_GRAY": "\033[97m",
+    "BLACK": "\033[98m",
+    "RESET": "\033[0m",
+    "BOLD": "\033[01m"
+}
+
+
+def logger(message, status=Status.INFO):
+    if status == Status.INFO:
+        return print(Color["CYAN"] + "[INFO] " + Color["RESET"] + message)
+    elif status == Status.WARNING:
+        return print(Color["YELLOW"] + "[WARN] " + Color["RESET"] + message)
+    elif status == Status.ERROR:
+        return print(Color["RED"] + "[ERROR] " + Color["RESET"] + message)
+    elif status == Status.DEBUG:
+        return print(Color["LIGHT_GRAY"] + "[DEBUG] " + Color["RESET"] + message)
+    else:
+        return print(message)
+
 
 def get_config(config):
     with open(config, 'r') as json_file:
@@ -32,7 +75,7 @@ def get_config(config):
 
 
 def download(data, URLS):
-    print(URLS)
+    logger(str(URLS), Status.DEBUG)
     ydl_opts = {
         "postprocessors": [
             {"key": "SponsorBlock"},
@@ -40,8 +83,11 @@ def download(data, URLS):
         ],
         "paths": {"home": data["path"]},
     }
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download(URLS)
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download(URLS)
+    except yt_dlp.DownloadError:
+        logger("Could not download the video", Status.ERROR)
 
 
 def get_latest_videos(key, data):
@@ -56,9 +102,14 @@ def get_latest_videos(key, data):
             order="date",
             publishedAfter="2022-05-24T00:00:00Z",
             type="video")
-        response = request.execute()
+        try:
+            response = request.execute()
+        except googleapiclient.errors.Error:
+            return logger("Could not reach google API", Status.ERROR)
+        except:
+            return logger("Unknown error", Status.ERROR)
+        print(json.dumps(response, indent=4))
         response = response["items"][0]
-        print(response)
         videos.append({"name": response["snippet"]["title"], "id": response["id"]["videoId"],
                        "author": response["snippet"]["channelTitle"],
                        "pouceOngle": response["snippet"]["thumbnails"]["default"]["url"],
@@ -66,9 +117,13 @@ def get_latest_videos(key, data):
     return videos
 
 
-def craft_url(ids):
+def craft_url(ids, type="video"):
     urls = []
-    base_url = "https://youtube.com/watch?v="
+    base_url = ""
+    if type == "video":
+        base_url = "https://youtube.com/watch?v="
+    elif type == "channel":
+        base_url = "https://youtube.com/channel/"
     for id in ids:
         urls.append(base_url + id)
     return urls
@@ -78,13 +133,16 @@ def subscribe(key, data, channel=None):
     if channel is None:
         search(key, data, type="channel")
     else:
-        print(channel)
-        print(data)
+        for i in data["subscribed_channels"]:
+            if channel["id"] == i["id"]:
+                return print(
+                    Color["RED"] + "[ERROR]" + Color["RESET"] + " You are already subscribed to " +
+                    channel["name"])
         data["subscribed_channels"].append({"name": channel["name"], "id": channel["id"]})
         with open(config, "w") as config_file:
             json.dump(data, config_file, indent=4)
             config_file.close()
-        print("Your now subscribed to " + channel["name"])
+        logger("Your now subscribed to " + channel["name"])
         main()
 
 
@@ -100,11 +158,10 @@ def watch(key, data, video=None):
         for i in range(len(video_list)):
             print(str(i) + ". " + video_list[i]["name"] + " by " + video_list[i]["author"])
         answer = prompt(question)
-        answer = answer["select_video"]
-        print(answer)
+        answer = answer["select_video"].split(",")
+        download(data, craft_url([video_list[int(i)]["id"] for i in answer]))
     else:
-        print(video)
-        print("downloading " + video["name"] + " to " + data["path"])
+        logger("downloading " + video["name"] + " to " + data["path"])
         download(data, craft_url([video["id"]]))
 
 
@@ -144,29 +201,36 @@ def search(key, data, type=None):
     request_response = request.execute()
     content = []
 
-    print("Here is what we found:")
-    for i in request_response["items"]:
-        if i["id"]["kind"] == "youtube#channel":
-            content.append({"type": "channel", "name": i["snippet"]["title"], "id": i["snippet"]["channelId"],
-                            "pouceOngle": i["snippet"]["thumbnails"]["medium"]["url"]})
-            print("type: channel - " + content[-1]["name"])
-        elif i["id"]["kind"] == "youtube#video":
-            content.append({"type": "video", "name": i["snippet"]["title"], "id": i["id"]["videoId"],
-                            "author": i["snippet"]["channelTitle"],
-                            "pouceOngle": i["snippet"]["thumbnails"]["default"]["url"],
-                            "time": i["snippet"]["publishTime"]})
+    logger("Here is what we found:")
+    for i in range(len(request_response["items"])):
+        if request_response["items"][i]["id"]["kind"] == "youtube#channel":
+            content.append({"type": "channel", "name": request_response["items"][i]["snippet"]["title"],
+                            "id": request_response["items"][i]["snippet"]["channelId"],
+                            "pouceOngle": request_response["items"][i]["snippet"]["thumbnails"]["medium"]["url"]})
             print(
-                "type: video - " + content[-1]["name"] + " by " + content[-1]["author"] + " at " + content[-1]["time"])
+                str(i) + ". channel - " + content[-1]["name"] + " - " + str(craft_url([content[-1]["id"]], "channel")))
+        elif request_response["items"][i]["id"]["kind"] == "youtube#video":
+            content.append({"type": "video", "name": request_response["items"][i]["snippet"]["title"],
+                            "id": request_response["items"][i]["id"]["videoId"],
+                            "author": request_response["items"][i]["snippet"]["channelTitle"],
+                            "pouceOngle": request_response["items"][i]["snippet"]["thumbnails"]["default"]["url"],
+                            "time": request_response["items"][i]["snippet"]["publishTime"]})
+            print(str(i) + ". video - " + content[-1]["name"] + " by " + content[-1]["author"] + " at " + content[-1][
+                "time"])
     response = prompt(questions[1])
     if content[int(response["result_choice"])]["type"] == "video":
-        print("Downloading Video")
+        logger("Downloading Video")
         watch(key, data, video=content[int(response["result_choice"])])
     elif content[int(response["result_choice"])]["type"] == "channel":
         subscribe(key, data, channel=content[int(response["result_choice"])])
 
 
 def main():
-    data = get_config(config)
+    try:
+        data = get_config(config)
+    except OSError:
+        return logger("Could not access config file", Status.ERROR)
+
     apikey = data["api_key"]
     answer = prompt(main_menu)
     if answer["default"] == main_menu[0]["choices"][0]:
@@ -180,4 +244,5 @@ def main():
 
 
 if __name__ == "__main__":
+    print(banner)
     main()

@@ -1,7 +1,9 @@
+import os
 import googleapiclient.discovery
 import googleapiclient.errors
 import yt_dlp
 import json
+import fnmatch
 from PyInquirer import prompt
 from enum import Enum
 
@@ -74,6 +76,42 @@ def get_config(config):
     return config_data
 
 
+def recover_download(data):
+    question = [
+        {
+            'type': 'list',
+            'name': 'default',
+            'message': 'Would you like to finish this download ?',
+            'choices': [
+                'Yes',
+                'No',
+                'Skip all',
+            ]
+        }
+    ]
+    for file in os.listdir(data["path"]):
+        if fnmatch.fnmatch(file, '*.part'):
+            logger("Found a uncompleted download: " + file, Status.WARNING)
+            a = prompt(question)
+            if a["default"] == question[0]['choices'][0]:
+                logger("Fetching download info", Status.INFO)
+                try:
+                    with open(file[:-15] + ".info.json", "r") as info_file:
+                        id = json.load(info_file)["id"]
+                except FileNotFoundError:
+                    logger("Could not find data file for this download", Status.ERROR)
+                    return False
+                except FileExistsError:
+                    logger("Could not find data file for this download", Status.ERROR)
+                    return False
+                download(data, craft_url([id]))
+                return True
+            elif a["default"] == question[0]['choices'][1]:
+                continue
+            else:
+                return False
+
+
 def download(data, URLS):
     logger(str(URLS), Status.DEBUG)
     ydl_opts = {
@@ -82,6 +120,7 @@ def download(data, URLS):
             {"key": "ModifyChapters", "remove_sponsor_segments": ['sponsor']}
         ],
         "paths": {"home": data["path"]},
+        "writeinfojson": True,
     }
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -100,7 +139,6 @@ def get_latest_videos(key, data):
             channelId=i["id"],
             maxResults=1,
             order="date",
-            publishedAfter="2022-05-24T00:00:00Z",
             type="video")
         try:
             response = request.execute()
@@ -108,7 +146,6 @@ def get_latest_videos(key, data):
             return logger("Could not reach google API", Status.ERROR)
         except:
             return logger("Unknown error", Status.ERROR)
-        print(json.dumps(response, indent=4))
         response = response["items"][0]
         videos.append({"name": response["snippet"]["title"], "id": response["id"]["videoId"],
                        "author": response["snippet"]["channelTitle"],
@@ -230,7 +267,7 @@ def main():
         data = get_config(config)
     except OSError:
         return logger("Could not access config file", Status.ERROR)
-
+    recover_download(data)
     apikey = data["api_key"]
     answer = prompt(main_menu)
     if answer["default"] == main_menu[0]["choices"][0]:

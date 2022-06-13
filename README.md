@@ -1,4 +1,4 @@
-#LocalYoutube
+# LocalYoutube
 
 Run youtube from the terminal without ads, algorithm and sponsored segments.
 Only a youtube api key is needed.
